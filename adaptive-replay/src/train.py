@@ -21,6 +21,8 @@ class Config:
     total_steps: int = 120_000
     switch_step: int = 60_000
     buffer_capacity: int = 20_000
+    change_type: str = "goal_switch"
+    results_dir: str = "results"
     batch_size: int = 64
     learning_starts: int = 1_000
     train_frequency: int = 4
@@ -52,7 +54,7 @@ def train(config: Config) -> Path:
         raise ValueError("--buffer-capacity must be smaller than --switch-step for this sudden-change experiment")
     set_seed(config.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = GoalSwitchGridWorld()
+    env = GoalSwitchGridWorld(change_type=config.change_type)
     agent = DQNAgent(env.state_dim, env.action_dim, config.learning_rate, config.gamma, device)
     buffer = ReplayBuffer(config.buffer_capacity, env.state_dim, config.method, np.random.default_rng(config.seed))
     state = env.reset()
@@ -61,7 +63,7 @@ def train(config: Config) -> Path:
     update_rows: list[dict[str, float | int]] = []
 
     for step in range(1, config.total_steps + 1):
-        if step == config.switch_step:
+        if step == config.switch_step and config.change_type != "none":
             env.set_phase("b")
         action = agent.act(state, epsilon(step, config.total_steps))
         next_state, reward, done = env.step(action)
@@ -80,6 +82,7 @@ def train(config: Config) -> Path:
                 "loss": loss,
                 "change_detected": int(buffer.detected_change),
                 "detected_at": buffer.detected_at or -1,
+                "detection_source": buffer.detection_source,
                 "switch_step": config.switch_step,
                 "buffer_evictions": buffer.eviction_count,
                 "selective_evictions": buffer.selective_eviction_count,
@@ -93,6 +96,7 @@ def train(config: Config) -> Path:
                 "phase_b_buffer_fraction": buffer.phase_fraction(config.switch_step),
                 "change_detected": int(buffer.detected_change),
                 "detected_at": buffer.detected_at or -1,
+                "detection_source": buffer.detection_source,
                 "switch_step": config.switch_step,
                 "buffer_evictions": buffer.eviction_count,
                 "selective_evictions": buffer.selective_eviction_count,
@@ -100,16 +104,16 @@ def train(config: Config) -> Path:
             state = env.reset()
             episode_return = 0.0
 
-    output_dir = Path("results")
+    output_dir = Path(config.results_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{config.method}_seed{config.seed}"
     episodes_path = output_dir / f"{stem}_episodes.csv"
     updates_path = output_dir / f"{stem}_updates.csv"
     write_csv(episodes_path, episode_rows, [
-        "step", "episode_return", "phase_b_buffer_fraction", "change_detected", "detected_at", "switch_step", "buffer_evictions", "selective_evictions",
+        "step", "episode_return", "phase_b_buffer_fraction", "change_detected", "detected_at", "detection_source", "switch_step", "buffer_evictions", "selective_evictions",
     ])
     write_csv(updates_path, update_rows, [
-        "step", "mean_td_error", "loss", "change_detected", "detected_at", "switch_step", "buffer_evictions", "selective_evictions",
+        "step", "mean_td_error", "loss", "change_detected", "detected_at", "detection_source", "switch_step", "buffer_evictions", "selective_evictions",
     ])
     return episodes_path
 
@@ -121,8 +125,18 @@ def parse_args() -> Config:
     parser.add_argument("--total-steps", type=int, default=120_000)
     parser.add_argument("--switch-step", type=int, default=60_000)
     parser.add_argument("--buffer-capacity", type=int, default=20_000)
+    parser.add_argument("--change-type", choices=sorted(GoalSwitchGridWorld.CHANGE_TYPES), default="goal_switch")
+    parser.add_argument("--results-dir", default="results")
     args = parser.parse_args()
-    return Config(args.method, args.seed, args.total_steps, args.switch_step, args.buffer_capacity)
+    return Config(
+        method=args.method,
+        seed=args.seed,
+        total_steps=args.total_steps,
+        switch_step=args.switch_step,
+        buffer_capacity=args.buffer_capacity,
+        change_type=args.change_type,
+        results_dir=args.results_dir,
+    )
 
 
 if __name__ == "__main__":

@@ -4,51 +4,33 @@
 
 A robot learns where a cookie is hidden in a grid. Then the cookie suddenly moves. Old memories of the first cookie location can make the robot slow to find the new one.
 
-This project asks whether the robot can notice the change and give less attention to old, unhelpful memories without deleting everything it learned.
+This project tests whether a robot can notice the change and give less attention to old, unhelpful memories without deleting everything it learned.
 
 ## Project goal
 
-This is a small reinforcement-learning experiment for:
-
-> **Learning to Forget Your Ex: Adaptive Experience Replay for Nonstationary Reinforcement Learning**
-
-A DQN agent learns in a 9×9 GridWorld. At the middle of training, the goal moves abruptly from the upper-right corner to the lower-right corner. The agent is not told that this happens.
-
-> Does change-aware, selective replay help an agent adapt faster than ordinary replay after a sudden change?
-
-## Replay methods
+A DQN agent learns in a 9×9 GridWorld. It compares three replay-memory strategies after a sudden environment shift:
 
 | Method | Behavior |
 | --- | --- |
-| `uniform` | Keeps a random sample of all past memories using reservoir sampling. |
+| `uniform` | Keeps a random sample of all past memories. |
 | `fifo` | Forgets the oldest memory first. |
-| `aer` | Detects a TD-error shift, then favors recent/useful memories and evicts stale low-score ones. |
+| `aer` | Detects reward-prediction or action-outcome shifts, then favors recent/useful memories and evicts stale low-score ones. |
 
-A memory is stored in RAM as a transition:
-
-```python
-{
-    "state": [row, column],
-    "action": 0,
-    "reward": -0.01,
-    "next_state": [row, column],
-    "done": False,
-    "step": 4250,
-    "td_error": 0.18,
-}
-```
+The main question is whether AER adapts faster without simply throwing every old memory away.
 
 ## Project files
 
 ```text
 adaptive-replay/
 ├── requirements.txt
-└── src/
-    ├── environment.py       # GridWorld and sudden goal switch
-    ├── dqn.py               # Neural network and DQN learning update
-    ├── replay_buffer.py     # Uniform, FIFO, and AER memory logic
-    ├── train.py             # Runs training and writes CSV logs
-    └── plot_results.py      # Creates paper figures from logs
+├── src/
+│   ├── environment.py       # GridWorld scenarios
+│   ├── replay_buffer.py     # Uniform, FIFO, and AER memory logic
+│   ├── train.py             # One training run
+│   ├── run_experiments.py   # Multi-seed, multi-scenario runs
+│   └── plot_results.py      # Paper figures
+└── tests/
+    └── test_replay_and_environment.py
 ```
 
 ## Setup
@@ -60,27 +42,43 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The core experiment runs on a laptop CPU. For sudden-change comparisons, `--buffer-capacity` must be smaller than `--switch-step`, so the buffer is full before the environment changes.
+## Scenarios
 
-## Run experiments
+- `goal_switch`: the goal moves to a new location.
+- `action_flip`: the meaning of every action reverses; AER uses action-outcome surprise to detect it.
+- `none`: no change occurs; this is the detector false-alarm control.
 
-A quick, valid comparison uses a 2,000-entry buffer:
+For sudden-change comparisons, `--buffer-capacity` must be smaller than `--switch-step`, so the buffer fills before the change.
+
+## Run a quick comparison
 
 ```bash
 for method in uniform fifo aer; do
   python -m src.train --method "$method" --seed 0 \
-    --total-steps 10000 --switch-step 5000 --buffer-capacity 2000
-done
+    --total-steps 10000 --switch-step 5000 --buffer-capacity 2000 \
+    --change-type goal_switch
+ done
 python -m src.plot_results
 ```
 
-Each run writes episode and update CSV logs under `results/`. Plotting creates:
+## Run the full validation suite
 
-- `figures/reward_over_time.png`
-- `figures/recovery_time.png`
-- `figures/buffer_composition.png`
-- `figures/change_detector_trace.png`
+This runs five seeds across both sudden changes and the no-change control:
 
-## Limits
+```bash
+python -m src.run_experiments
+```
 
-This is a controlled toy environment. AER uses a hand-designed relevance score, and TD-error detection can false-alarm or miss mild changes. Run at least five seeds per method before drawing research conclusions.
+Results are written to `results/<scenario>/`. Create figures for a scenario with:
+
+```bash
+python -m src.plot_results --results-dir results/goal_switch --output-dir figures/goal_switch
+```
+
+Run unit tests with:
+
+```bash
+pytest
+```
+
+Use at least five seeds per method before drawing research conclusions. AER may still fail, false-alarm, or over-forget; those outcomes are part of the research result.

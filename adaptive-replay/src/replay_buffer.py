@@ -19,8 +19,12 @@ class ReplayBuffer:
         self.eviction_count = 0
         self.selective_eviction_count = 0
         self.td_history: deque[float] = deque(maxlen=500)
+        self.dynamics_surprises: deque[float] = deque(maxlen=25)
+        self.expected_deltas = np.zeros((4, state_dim), dtype=np.float64)
+        self.dynamics_counts = np.zeros(4, dtype=np.int64)
         self.detected_change = False
         self.detected_at: int | None = None
+        self.detection_source = ""
 
     def __len__(self) -> int:
         return len(self.items)
@@ -34,6 +38,8 @@ class ReplayBuffer:
         done: bool,
         step: int,
     ) -> None:
+        if self.method == "aer":
+            self._observe_dynamics(state, action, next_state, step)
         item = {
             "state": state.copy(), "action": action, "reward": reward,
             "next_state": next_state.copy(), "done": done, "step": step, "td_error": 1.0,
@@ -76,9 +82,27 @@ class ReplayBuffer:
         for index, error in zip(indices, errors):
             self.items[int(index)]["td_error"] = float(error)
         if self.method == "aer":
-            self._detect_change(step)
+            self._detect_td_change(step)
 
-    def _detect_change(self, step: int) -> None:
+    def _observe_dynamics(self, state: np.ndarray, action: int, next_state: np.ndarray, step: int) -> None:
+        if self.detected_change:
+            return
+        delta = next_state.astype(np.float64) - state.astype(np.float64)
+        if np.linalg.norm(delta) < 1e-8:
+            return
+        if self.dynamics_counts[action] < 100:
+            count = self.dynamics_counts[action]
+            self.expected_deltas[action] = (self.expected_deltas[action] * count + delta) / (count + 1)
+            self.dynamics_counts[action] += 1
+            return
+        if np.min(self.dynamics_counts) < 100:
+            return
+        surprise = float(np.linalg.norm(delta - self.expected_deltas[action]))
+        self.dynamics_surprises.append(float(surprise > 0.08))
+        if len(self.dynamics_surprises) == self.dynamics_surprises.maxlen and np.mean(self.dynamics_surprises) > 0.60:
+            self._mark_change(step, "dynamics")
+
+    def _detect_td_change(self, step: int) -> None:
         if self.detected_change or len(self.td_history) < self.td_history.maxlen:
             return
         errors = np.asarray(self.td_history)
@@ -86,8 +110,13 @@ class ReplayBuffer:
         history = errors[:-100]
         threshold = float(history.mean() + 2.5 * (history.std() + 1e-6))
         if float(recent.mean()) > threshold:
+            self._mark_change(step, "td_error")
+
+    def _mark_change(self, step: int, source: str) -> None:
+        if not self.detected_change:
             self.detected_change = True
             self.detected_at = step
+            self.detection_source = source
 
     def _probabilities(self, step: int) -> np.ndarray | None:
         if self.method != "aer" or not self.detected_change:
