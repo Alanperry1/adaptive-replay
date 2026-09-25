@@ -13,7 +13,7 @@ METHOD_COLORS = {"uniform": "#4C78A8", "fifo": "#F58518", "aer": "#54A24B"}
 
 
 def load_csv(path: Path) -> np.ndarray:
-    data = np.genfromtxt(path, delimiter=",", names=True)
+    data = np.genfromtxt(path, delimiter=",", names=True, dtype=None, encoding="utf-8")
     return np.atleast_1d(data)
 
 
