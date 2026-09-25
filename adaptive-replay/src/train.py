@@ -48,6 +48,8 @@ def write_csv(path: Path, rows: list[dict[str, float | int]], fields: list[str])
 
 
 def train(config: Config) -> Path:
+    if config.buffer_capacity >= config.switch_step:
+        raise ValueError("--buffer-capacity must be smaller than --switch-step for this sudden-change experiment")
     set_seed(config.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = GoalSwitchGridWorld()
@@ -79,6 +81,8 @@ def train(config: Config) -> Path:
                 "change_detected": int(buffer.detected_change),
                 "detected_at": buffer.detected_at or -1,
                 "switch_step": config.switch_step,
+                "buffer_evictions": buffer.eviction_count,
+                "selective_evictions": buffer.selective_eviction_count,
             })
         if step % config.target_frequency == 0:
             agent.sync_target()
@@ -90,6 +94,8 @@ def train(config: Config) -> Path:
                 "change_detected": int(buffer.detected_change),
                 "detected_at": buffer.detected_at or -1,
                 "switch_step": config.switch_step,
+                "buffer_evictions": buffer.eviction_count,
+                "selective_evictions": buffer.selective_eviction_count,
             })
             state = env.reset()
             episode_return = 0.0
@@ -100,10 +106,10 @@ def train(config: Config) -> Path:
     episodes_path = output_dir / f"{stem}_episodes.csv"
     updates_path = output_dir / f"{stem}_updates.csv"
     write_csv(episodes_path, episode_rows, [
-        "step", "episode_return", "phase_b_buffer_fraction", "change_detected", "detected_at", "switch_step",
+        "step", "episode_return", "phase_b_buffer_fraction", "change_detected", "detected_at", "switch_step", "buffer_evictions", "selective_evictions",
     ])
     write_csv(updates_path, update_rows, [
-        "step", "mean_td_error", "loss", "change_detected", "detected_at", "switch_step",
+        "step", "mean_td_error", "loss", "change_detected", "detected_at", "switch_step", "buffer_evictions", "selective_evictions",
     ])
     return episodes_path
 
@@ -114,8 +120,9 @@ def parse_args() -> Config:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--total-steps", type=int, default=120_000)
     parser.add_argument("--switch-step", type=int, default=60_000)
+    parser.add_argument("--buffer-capacity", type=int, default=20_000)
     args = parser.parse_args()
-    return Config(args.method, args.seed, args.total_steps, args.switch_step)
+    return Config(args.method, args.seed, args.total_steps, args.switch_step, args.buffer_capacity)
 
 
 if __name__ == "__main__":

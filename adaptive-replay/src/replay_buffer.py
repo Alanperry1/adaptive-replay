@@ -16,6 +16,8 @@ class ReplayBuffer:
         self.items: list[dict[str, object]] = []
         self.write_index = 0
         self.total_seen = 0
+        self.eviction_count = 0
+        self.selective_eviction_count = 0
         self.td_history: deque[float] = deque(maxlen=500)
         self.detected_change = False
         self.detected_at: int | None = None
@@ -46,10 +48,12 @@ class ReplayBuffer:
                 return
         elif self.method == "aer" and self.detected_change:
             index = self._eviction_index(step)
+            self.selective_eviction_count += 1
         else:
             index = self.write_index
             self.write_index = (self.write_index + 1) % self.capacity
         self.items[index] = item
+        self.eviction_count += 1
 
     def sample(self, batch_size: int, step: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
         if len(self.items) < batch_size:
